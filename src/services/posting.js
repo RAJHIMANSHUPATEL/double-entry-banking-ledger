@@ -299,7 +299,7 @@ export async function loadEntry(client, entryId) {
     [entryId],
   );
   const lines = await client.query(
-    `SELECT l.id, l.line_no, l.debit_paise, l.credit_paise, l.line_narration, a.code AS account_code
+    `SELECT l.id, l.line_no, l.account_id, l.debit_paise, l.credit_paise, l.line_narration, a.code AS account_code
      FROM journal_lines l
      JOIN accounts a ON a.id = l.account_id
      WHERE l.entry_id = $1
@@ -324,6 +324,7 @@ export async function loadEntry(client, entryId) {
     lines: lines.rows.map((line) => ({
       id: line.id,
       lineNo: line.line_no,
+      accountId: line.account_id,
       accountCode: line.account_code,
       debitPaise: line.debit_paise,
       creditPaise: line.credit_paise,

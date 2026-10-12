@@ -1,8 +1,6 @@
 # Paise Ledger
 
-**Status: design only. No application code in this folder yet.**
-
-Implementation waits for an explicit go-ahead, then follows [plan.md](plan.md) in order. This document is the specification the code has to meet.
+The books are implemented. [plan.md](plan.md) is the phase plan this repository was built from. [BUILD_PROMPT.md](BUILD_PROMPT.md) is the stack this code actually uses.
 
 Paise Ledger is a double-entry banking ledger for one fictional Indian small business. It is a portfolio project. Its job is to show financial-systems correctness, a clean service boundary, and tests that pin the accounting invariants down.
 
@@ -32,39 +30,38 @@ The fictional business is **Anaya Studio**, a sole proprietorship in Pune, Mahar
 - Database constraints and triggers that still reject a bad write when a caller bypasses the service.
 - An append-only journal, including a reversal link that does not update the original row.
 - A concurrency test in which two withdrawals race and the cash balance never goes negative.
-- A Hypothesis test: after a random sequence of valid entries and reversals, total debits equal total credits and the trial balance difference is zero.
-- Bank CSV matching with planted ambiguities, plus a Streamlit desk a reviewer can click through.
+- A fast-check property test: after a random sequence of valid entries and reversals, total debits equal total credits and the trial balance difference is zero.
+- Bank CSV matching with planted ambiguities, plus a React desk a reviewer can click through.
 - OpenAPI at `/docs`.
 
 ## Stack
 
 | Piece | Choice |
 | --- | --- |
-| Language | Python 3.11+ (Docker image: 3.12) |
-| API | FastAPI, Pydantic v2 |
-| ORM | SQLAlchemy 2.0, typed mapped columns |
-| Database | SQLite file by default. Schema, types, and migrations stay valid on PostgreSQL |
-| Migrations | Alembic |
-| Tests | pytest, pytest-cov, Hypothesis |
-| Matcher | rapidfuzz, scores stored as integers 0–100 |
-| Spreadsheets | openpyxl |
-| UI | Streamlit, talking only to the HTTP API |
-| Packaging | Dockerfile, docker-compose.yml, Makefile |
+| Language | Node.js 20+ (Docker image: 22), JavaScript with JSDoc |
+| API | Fastify 5, Zod |
+| Database | PostgreSQL 16, accessed with `pg` |
+| Migrations | Ordered SQL files in `migrations/`, applied by `src/db/migrate.js` |
+| Tests | Vitest, v8 coverage, fast-check |
+| Matcher | fuzzball `token_set_ratio`, scores stored as integers 0–100 |
+| Spreadsheets | exceljs |
+| UI | React 18, Vite, React Router. The browser calls `/api`; Vite strips that prefix |
+| Packaging | Dockerfile, Dockerfile.web, docker-compose.yml, Makefile |
 
 ## Architecture
 
 ```mermaid
 flowchart TB
   subgraph clients
-    UI["Streamlit pages"]
+    UI["React pages"]
   end
 
-  subgraph api_layer ["api/"]
+  subgraph api_layer ["src/api/"]
     ROUTES["Route handlers"]
     ERRORS["Error envelope and handlers"]
   end
 
-  subgraph domain ["services/ + reports/ + importers/"]
+  subgraph domain ["src/services/ + src/reports/ + src/importers/"]
     POST["PostingService"]
     REV["ReversalService"]
     IDEM["IdempotencyService"]
@@ -77,7 +74,7 @@ flowchart TB
   end
 
   subgraph storage
-    DB[("SQLite file or PostgreSQL")]
+    DB[("PostgreSQL")]
   end
 
   UI -->|"HTTP JSON, paise integers"| ROUTES
@@ -128,35 +125,35 @@ sequenceDiagram
 
 | Layer | Responsibility |
 | --- | --- |
-| `app/api/` | HTTP, status codes, auth-less actor header, OpenAPI. Calls a service and returns a schema. |
-| `app/services/` | Transactions, invariants, locking, reversals, idempotency, report figures, reconciliation decisions. |
-| `app/models/` | SQLAlchemy tables only. |
-| `app/schemas/` | Pydantic request and response models. |
-| `app/reports/` | Excel workbooks and the tabular shaping of figures already computed in services. |
-| `app/importers/` | CSV parsing and the pure matching function. |
-| `app/core/` | `Money`, settings, engine, logging. |
-| `streamlit_app/` | Pages and an HTTP client. Display formatting only. |
+| `src/api/` | HTTP, status codes, auth-less actor header, OpenAPI. Calls a service and returns JSON. |
+| `src/services/` | Transactions, invariants, locking, reversals, idempotency, report figures, reconciliation decisions. |
+| `migrations/` | PostgreSQL tables, checks, and triggers. |
+| `src/schemas/` | Zod request models. |
+| `src/reports/` | Excel workbooks. Figures are computed in services. |
+| `src/importers/` | CSV parsing and the pure matching function. |
+| `src/domain/` | Integer paise and the UTC clock used by the hash. |
+| `web/` | React pages and an HTTP client. Display formatting only. |
 
-Route handlers do not compute balances, compare debits to credits, or call rapidfuzz. The Streamlit app does not open the database.
+Route handlers do not compute balances, compare debits to credits, or score narrations. The React app does not open the database. The browser calls `/api/...`. Vite, in development and in the production preview server, strips that prefix before the request reaches Fastify. `/docs` stays on the API origin.
 
 ## Money
 
-One rupee is 100 paise. Persistence, validation, hashing, matching, and totals use Python `int` paise.
+One rupee is 100 paise. Persistence, validation, hashing, matching, and totals use JavaScript integers (safe integers only).
 
-`Money` is a small value type:
+`src/domain/money.js` is the only money helper:
 
-- Construct only from `int`.
-- Parse a rupee string at the edges (CSV cells, Streamlit inputs) with `decimal.Decimal`, then convert to paise.
+- Construct only from a safe integer.
+- Parse a rupee string at the edges (CSV cells, React inputs) with `BigInt`, never `parseFloat`.
 - Reject a string with more than two decimal places.
-- Format with the Indian grouping used in display: last three digits, then groups of two, always two decimal places, prefix `₹`. Example: `123456789` paise renders as `₹12,34,567.89`. Negative amounts render as `-₹5,000.50`.
+- Format with `Intl` for `en-IN` and `INR`: last three digits, then groups of two, always two decimal places, prefix `₹`. Example: `123456789` paise renders as `₹12,34,567.89`. Negative amounts render as `-₹5,000.50`.
 
-The HTTP API accepts and returns paise integers. Response schemas may also carry a `*_display` string produced by `Money` so the UI does not reimplement grouping. The integer remains the source of truth. Match scores from rapidfuzz are converted to integers immediately. Those scores are not money.
+The HTTP API accepts and returns paise integers. Responses also carry a `*_display` string produced by `formatInr` so the UI does not reimplement grouping. The integer remains the source of truth. Match scores from fuzzball are rounded to integers immediately. Those scores are not money.
 
 Per-line cap: `10**14` paise (₹1,000 crore). The cap is a sanity check for this SME ledger.
 
 ## Data model
 
-Canonical schema for the Alembic migration. Types below are the portable forms SQLAlchemy should emit (`Integer`, `String`, `Date`, `DateTime(timezone=True)`, `Boolean`, `Text`). SQLite receives the trigger dialect described in [plan.md](plan.md). PostgreSQL receives the same tables plus deferred constraint triggers.
+Canonical schema for `migrations/0001_init.sql`. Types below are the PostgreSQL forms the migration creates (`integer`, `varchar`, `date`, `timestamptz`, `boolean`, `text`). Deferred constraint triggers reject a commit whose lines do not match the header.
 
 Surrogate keys are integers. Account identity in the API is the stable `code`.
 
@@ -224,21 +221,21 @@ OR
 
 An entry has at least two lines. The header totals equal the sum of the lines. Enforcement map:
 
-| Rule | Service, before commit | SQLite | PostgreSQL |
-| --- | --- | --- | --- |
-| Header debits equal header credits | yes | CHECK | CHECK |
-| Each line is a single side, non-negative | yes | CHECK | CHECK |
-| Line sums equal the header | yes | assertion inside the transaction | deferred constraint trigger |
-| At least two lines | yes | assertion inside the transaction | deferred constraint trigger |
-| Running line sums do not exceed the header | yes | AFTER INSERT trigger | AFTER INSERT trigger |
-| Leaf and active account | yes | trigger | trigger |
-| No UPDATE or DELETE of posted rows | no repository method does this | trigger | trigger |
-| One reversal per original | yes | partial unique index | partial unique index |
-| Idempotency key unique | yes | UNIQUE | UNIQUE |
-| Overdraft on protected assets | yes, after all lines exist | via the write lock | `FOR UPDATE` plus the same check |
-| Hash chain | yes | unique `sequence_no` | unique `sequence_no` |
+| Rule | Service, before commit | PostgreSQL |
+| --- | --- | --- |
+| Header debits equal header credits | yes | CHECK |
+| Each line is a single side, non-negative | yes | CHECK |
+| Line sums equal the header | yes | deferred constraint trigger |
+| At least two lines | yes | deferred constraint trigger |
+| Running line sums do not exceed the header | yes | AFTER INSERT trigger |
+| Leaf and active account | yes | trigger |
+| No UPDATE or DELETE of posted rows | no repository method does this | trigger |
+| One reversal per original | yes | partial unique index |
+| Idempotency key unique | yes | UNIQUE |
+| Overdraft on protected assets | yes, after all lines exist | `SELECT … FOR UPDATE` plus the same check |
+| Hash chain | yes | unique `sequence_no` |
 
-SQLite has no deferred triggers. A raw SQL session that inserts a header and commits before the lines match can leave an under-complete entry on SQLite. The service never does that, and the tests run through the service plus the triggers. PostgreSQL's deferred trigger rejects that commit even if the service is bypassed. That difference is an accepted limitation of the default database, recorded in the trade-offs section.
+A raw SQL session that inserts a header and commits before the lines match is rejected by the deferred trigger. The service also checks the same invariant before commit. Tests run through the service and, separately, through the triggers.
 
 ### idempotency_keys
 
@@ -435,12 +432,9 @@ Canonical request hash: SHA-256 over UTF-8 JSON with sorted keys, no insignifica
 
 The hash chain needs a single total order, so postings share one global lock: the `ledger_meta` row.
 
-- PostgreSQL: `SELECT ... FROM ledger_meta WHERE id = 1 FOR UPDATE`.
-- SQLite: `PRAGMA journal_mode=WAL` and `PRAGMA busy_timeout=5000`. The first statement in the posting transaction is `UPDATE ledger_meta SET last_sequence = last_sequence WHERE id = 1`, which takes the reserved lock. The second writer waits, then re-reads balances.
+The first statement in the posting transaction is `SELECT … FROM ledger_meta WHERE id = 1 FOR UPDATE`. The second writer waits, then re-reads balances.
 
 Disjoint accounts still queue. That is the cost of one audit chain. A later design can shard chains per book once a single business ledger is no longer the goal.
-
-`PRAGMA foreign_keys=ON` is set on every SQLite connection.
 
 ### Hash chain
 
@@ -553,7 +547,7 @@ Candidates are unmatched journal lines on that bank account where:
 - the journal line is not already matched, and
 - this statement line has not already rejected that journal line.
 
-Narration score is `int(round(rapidfuzz.fuzz.token_set_ratio(...)))` after lowercasing, collapsing whitespace, and stripping punctuation. The ledger narration is `line_narration` when present, otherwise the entry narration.
+Narration score is `Math.round(fuzzball.token_set_ratio(...))`, clamped to 0–100, after lowercasing, collapsing whitespace, and stripping punctuation. The ledger narration is `line_narration` when present, otherwise the entry narration.
 
 Assignment is greedy, most specific first: fewer candidates, then higher score. A journal line is consumed at most once inside a run.
 
@@ -573,7 +567,7 @@ Empty narration never auto-matches. Exact amount is mandatory. A ₹1 difference
 
 ## HTTP API
 
-Base URL in development: `http://localhost:8000`. Interactive docs: `GET /docs`. Schema: `GET /openapi.json`.
+Base URL in development: `http://localhost:3000`. Interactive docs: `GET /docs`. Schema: `GET /openapi.json`.
 
 | Method | Path | Success |
 | --- | --- | --- |
@@ -601,7 +595,7 @@ Base URL in development: `http://localhost:8000`. Interactive docs: `GET /docs`.
 
 ### Error envelope
 
-Every error uses this shape, including validation errors (handler reshapes FastAPI's 422):
+Every error uses this shape, including validation errors (a Fastify status below 500 becomes `VALIDATION_ERROR`):
 
 ```json
 {
@@ -616,7 +610,7 @@ Every error uses this shape, including validation errors (handler reshapes FastA
 
 | Code | HTTP | When |
 | --- | --- | --- |
-| `VALIDATION_ERROR` | 422 | Pydantic or a malformed query |
+| `VALIDATION_ERROR` | 422 | Zod, or a malformed query |
 | `UNBALANCED_ENTRY` | 422 | Debits differ from credits, or fewer than two lines |
 | `ACCOUNT_NOT_FOUND` | 404 | Unknown code |
 | `ACCOUNT_NOT_POSTABLE` | 422 | Group or inactive account |
@@ -629,13 +623,13 @@ Every error uses this shape, including validation errors (handler reshapes FastA
 | `CSV_REJECTED` | 422 | No usable rows, or not a CSV |
 | `ACTOR_REQUIRED` | 400 | Missing `X-Actor` on a write |
 
-Logs are JSON via structlog: `request_id`, `actor`, event name, `entry_id`, `sequence_no`, `duration_ms`. Log lines do not include full narrations from the bank CSV at info level.
+Logs are JSON via pino: `request_id`, `actor`, event name, `entry_id`, `sequence_no`, `duration_ms`. Log lines do not include full narrations from the bank CSV at info level.
 
 ## Seed data
 
-`python -m app.seed.generate` (and `make seed`) fills a migrated database and writes `data/seed/hdfc_apr_sep_2026.csv`.
+`npm run seed` (and `make seed`) fills a migrated database. The planted file `data/seed/hdfc_apr_sep_2026.csv` is committed with the repository.
 
-The generator uses `random.Random(2026)` only, so the books and the CSV are stable. It posts about 300 journal entries from 1 April 2026 through 30 September 2026. The acceptable band in the test that guards the generator is 280–320 entries. The chain verifies afterwards, and the trial balance difference is 0.
+The generator uses a deterministic linear congruential generator seeded with 2026 (`Math.imul` by 1664525). The books and the CSV are stable across runs. It posts about 300 journal entries from 1 April 2026 through 30 September 2026. The acceptable band in the test that guards the generator is 280–320 entries. A checked run printed 297 entries, with debit and credit totals both `130564558` paise. The chain verifies afterwards, and the trial balance difference is 0.
 
 Shape of the story, tuned inside the generator so the count lands in range:
 
@@ -675,9 +669,9 @@ The bank CSV is built from lines that hit account `1120`, then edited with a fix
 
 The seed command refuses to run against a database that already has journal entries, so it cannot double-post a demo.
 
-## Streamlit
+## React UI
 
-`streamlit_app/app.py` is the dashboard. Other screens live under `streamlit_app/pages/`. The app reads `API_BASE_URL`, default `http://localhost:8000`. The actor name is session state and is sent as `X-Actor`.
+`web/` is a Vite application. In development it listens on port 5173 and proxies `/api` to the Fastify process, stripping the prefix. The actor name is stored in `sessionStorage` under `actor` and sent as `X-Actor`. Rupee inputs call `parseRupees` from `src/domain/money.js`. Tables show the API's display strings.
 
 | Page | What the user can do |
 | --- | --- |
@@ -708,7 +702,7 @@ date        narration                     debit total
 
 ### Integer paise
 
-Addition, equality, and the overdraft check have to be exact. Paise are already the smallest unit in these books, so an integer is the stored amount. `Decimal` appears only while a human-format string is being parsed, and the result is an `int` before it reaches a service. Display grouping, including lakhs and crores, happens when a string is built for a person or a spreadsheet. The database never sees a rupee float, and the journal hash is computed from the integers.
+Addition, equality, and the overdraft check have to be exact. Paise are already the smallest unit in these books, so an integer is the stored amount. A rupee string is parsed with `BigInt` at the edge, and the result is an integer before it reaches a service. Display grouping, including lakhs and crores, happens when a string is built for a person or a spreadsheet. The database never sees a rupee float, and the journal hash is computed from the integers.
 
 ### Append-only journal
 
@@ -720,11 +714,11 @@ The cost is storage and a stricter support workflow. You cannot patch a typo in 
 
 Create is the operation a client will retry. The key is stored with a hash of the body in the same commit as the entry, after the ledger lock is held. A retry with the same body observes the first commit and returns it. A retry with a different body is a conflict, because silently posting the second meaning would hide a client bug. Keys are not burned by validation failures, because the user still needs to fix the form and submit it.
 
-The header is optional so a script that posts once and does not retry stays easy to write. The Streamlit form always sends one.
+The header is optional so a script that posts once and does not retry stays easy to write. The post-entry form always sends one. The key is a UUID held in component state and replaced only after a successful post, so a rejected form retries with the same key.
 
 ### Concurrency
 
-Two correct balances, computed a moment apart, can both believe the bank has the cash. The posting transaction updates `ledger_meta` first and holds that row until commit. On PostgreSQL that is `SELECT ... FOR UPDATE`. On SQLite the same update takes the write lock, and `busy_timeout` makes the other writer wait. The loser then sees the winner's balance and, in the overdraft test, receives `OVERDRAFT`.
+Two correct balances, computed a moment apart, can both believe the bank has the cash. The posting transaction locks `ledger_meta` with `SELECT … FOR UPDATE` and holds that row until commit. The loser then sees the winner's balance and, in the overdraft test, receives `OVERDRAFT`.
 
 A single global lock also gives the hash chain a unique `prev_hash`. Finer locks per account would allow overlapping posts on disjoint accounts and would race the chain. One lock is the right scope while there is one chain per database. Throughput is one posting commit at a time, which is enough for the books of a studio this size.
 
@@ -736,57 +730,64 @@ A single global lock also gives the hash chain a unique `prev_hash`. Finer locks
 - Reversals may drive a protected account negative. Ordinary entries may not.
 - Day-first dates in bank CSVs.
 - Reports compute current earnings in memory. They do not post closing journals.
-- SQLite is the default so `docker compose up` needs no extra database server. PostgreSQL is a supported dialect for the same models, with stronger deferred checks.
-- The public API speaks paise. Rupee strings are an edge concern of CSV and Streamlit.
+- PostgreSQL is the only database. Compose starts `postgres:16-alpine`. Deferred triggers are part of the migration, and the tests run against PostgreSQL.
+- The public API speaks paise. Rupee strings are an edge concern of CSV import and the React forms.
 
 ## Testing
 
 | Area | What it locks |
 | --- | --- |
-| `tests/unit/test_money.py` | Parsing, rejection of extra decimal places, lakh grouping, negative display |
-| `tests/unit/test_posting.py` | Balance, minimum lines, leaf and inactive accounts, overdraft, rollback cleanliness, trigger refusal of UPDATE and DELETE |
-| `tests/unit/test_reversal.py` | Swapped lines, link, second reversal refused, reversal allowed when it overdrafts |
-| `tests/unit/test_idempotency.py` | Replay, conflict, key not burned by a 422, sequence unchanged on replay |
-| `tests/unit/test_hash_chain.py` | Known canonical string, tamper detection, verify endpoint service |
-| `tests/property/test_ledger_invariants.py` | Hypothesis: random valid entries and reversals, debits equal credits, trial balance difference 0, chain ok |
-| `tests/concurrency/test_concurrent_posting.py` | Two threads withdraw the full cash balance, one success, balance never negative |
-| `tests/importers/test_csv_matcher.py` | Duplicate amounts, same-day pairs, blank narration, date formats, ±3 day window, ₹1 miss, unique assignment |
-| `tests/reports/test_reports.py` | The worked example above, plus a reversal flowing through P&L |
+| `tests/unit/money.test.js` | Parsing, rejection of extra decimal places, lakh grouping, negative display |
+| `tests/unit/posting.test.js` | Balance, minimum lines, leaf and inactive accounts, overdraft, rollback cleanliness, trigger refusal of UPDATE and DELETE |
+| `tests/unit/reversal.test.js` | Swapped lines, link, second reversal refused, reversal allowed when it overdrafts |
+| `tests/unit/idempotency.test.js` | Replay, conflict, key not burned by a 422, sequence unchanged on replay |
+| `tests/unit/hashChain.test.js` | Known canonical string, tamper detection, verify endpoint service |
+| `tests/property/ledgerInvariants.test.js` | fast-check: random valid entries and reversals, debits equal credits, trial balance difference 0, chain ok |
+| `tests/concurrency/concurrentPosting.test.js` | Two clients withdraw the full cash balance, one success, balance never negative |
+| `tests/importers/csvMatcher.test.js` | Duplicate amounts, same-day pairs, blank narration, date formats, ±3 day window, ₹1 miss, unique assignment |
+| `tests/reports/reports.test.js` | The worked example above, plus a reversal flowing through P&L |
 | `tests/api/` | Envelope, status codes, OpenAPI route presence |
 
-Coverage gate: 85% on `app/services`, `app/importers`, and `app/reports`, with `app/seed` omitted. `app/reports/excel.py` is included by one workbook test so the gate stays honest.
+Coverage gate: 85% line coverage on `src/services`, `src/importers`, and `src/reports`, with `src/seed` omitted. `src/reports/excel.js` is included by one workbook test so the gate stays honest. The threshold is enforced on an unfiltered `npm test`. A filtered phase run still collects coverage and does not lower the gate.
 
-The property test uses a chart whose accounts do not block overdraft, so a random balanced entry is a valid entry. Overdraft has its own examples. Hypothesis settings: `max_examples=50`, `deadline=None`.
+The property test uses a chart whose accounts do not block overdraft, so a random balanced entry is a valid entry. Overdraft has its own examples. fast-check settings: `numRuns: 50`, seed `2026`.
 
-Tests migrate a template database once per session and copy the file per test. They do not delete journal rows, because the triggers forbid it.
+Each test creates a private schema in `paise_ledger_test`, runs the migrations into it, and drops the schema afterwards. Tests do not delete journal rows, because the triggers forbid it. The concurrency test uses two separate `pg` clients against the same schema so `FOR UPDATE` actually blocks.
 
 ## How to run
 
-These commands are the contract for the packaging phase. They are not runnable from this folder today, because the application has not been created. [plan.md](plan.md) builds them, then this section loses the caveat once each command has been executed.
+These commands were run against this repository. Node.js 20 or newer is required. PostgreSQL must already be running for the npm commands, with the URL in `.env.example` (`postgres://paise:paise@localhost:5432/paise_ledger`). `npm test` creates `paise_ledger_test` when it can.
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-pip install -e ".[dev]"
-make migrate
-make test
-make seed
-make run                        # docker compose up --build
+npm install
+npm install --prefix web
+npm run migrate
+npm test
+npm run seed
+npm run dev          # API on 3000 and Vite on 5173
 ```
 
-After `make run`:
+`make test`, `make migrate`, `make seed`, and `make lint` call those npm scripts. `make demo` migrates, then seeds. `make run` is `docker compose up --build`.
 
-- API: `http://localhost:8000`
-- Docs: `http://localhost:8000/docs`
-- Streamlit: `http://localhost:8501`
+After `make run` (or `docker compose up --build`):
 
-`make seed` inside the API container loads the demo. A second seed attempt exits with an error if entries already exist.
+- API: `http://localhost:3000`
+- Docs: `http://localhost:3000/docs`
+- UI: `http://localhost:8080`
 
-Local SQLite file: `data/ledger.db`. Docker stores that file on the `ledger-data` volume at `/data/ledger.db`.
+Load the demo inside the API container once the API is healthy:
+
+```bash
+docker compose exec api npm run seed
+```
+
+A second seed attempt exits with an error if entries already exist. Compose stores PostgreSQL data in the `pgdata` volume.
+
+During development, open the UI at `http://localhost:5173`. Both the Vite dev server and the production preview server strip `/api` before proxying to Fastify. Set `API_PROXY_TARGET` when the API is not on `127.0.0.1:3000`.
 
 ## Screenshots
 
-Captured during the UI milestone and stored in `docs/screenshots/` once the app is running against the seed:
+Captured from the React app against a database loaded by `npm run seed`:
 
 | File | Must show |
 | --- | --- |
@@ -797,10 +798,16 @@ Captured during the UI milestone and stored in `docs/screenshots/` once the app 
 | `docs/screenshots/reconciliation.png` | Matched, suggested with confirm, and unmatched rows together |
 | `docs/screenshots/audit-log.png` | Chain verification with `ok: true` after the seed |
 
+![Dashboard](docs/screenshots/dashboard.png)
+![Post entry](docs/screenshots/post-entry.png)
+![Account statement](docs/screenshots/account-statement.png)
+![Trial balance](docs/screenshots/trial-balance.png)
+![Reconciliation](docs/screenshots/reconciliation.png)
+![Audit log](docs/screenshots/audit-log.png)
+
 ## What I'd do next
 
 - Real authentication and roles: a bookkeeper can post, an auditor can read and verify, neither can turn triggers off.
-- PostgreSQL as the compose default, with the SQLite path kept for a zero-dependency demo, and the deferred balance trigger running in CI against Postgres.
 - Period close: a posted closing entry that moves income and expense to retained earnings, with the balance sheet reading that entry once it exists.
 - Multi-currency is out of scope until paise-style minor units exist per currency. I would not introduce floats to get there.
 - Document attachments on a voucher, stored outside the hash canonicalization or explicitly versioned into it.
@@ -808,29 +815,30 @@ Captured during the UI milestone and stored in `docs/screenshots/` once the app 
 - Pagination and filters on the audit log, and a daily verify-chain job that fails loud when `ok` is false.
 - Idempotency retention and a story for `in progress` if we ever split the key insert from the commit. The current single-transaction design does not need a recovery sweeper.
 
-## Repository layout the implementation will create
+## Repository layout
 
 ```text
-double-entry-ledger/
+paise-ledger/
   README.md
   plan.md
-  pyproject.toml
+  BUILD_PROMPT.md
+  package.json
   Makefile
   Dockerfile
+  Dockerfile.web
   docker-compose.yml
-  alembic.ini
-  alembic/versions/
-  app/
-    main.py
+  LICENSE
+  migrations/
+  src/
     api/
     services/
-    models/
     schemas/
     reports/
     importers/
-    core/
+    domain/
     seed/
-  streamlit_app/
+    db/
+  web/
   tests/
   data/seed/
   docs/screenshots/

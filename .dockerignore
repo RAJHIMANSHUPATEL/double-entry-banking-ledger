@@ -1,0 +1,8 @@
+node_modules
+web/node_modules
+coverage
+.git
+docs
+*.log
+.env
+web/dist

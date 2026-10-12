@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: paise
+      POSTGRES_PASSWORD: paise
+      POSTGRES_DB: paise_ledger
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paise -d paise_ledger"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "5432:5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://paise:paise@postgres:5432/paise_ledger
+      HOST: 0.0.0.0
+      PORT: "3000"
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      API_PROXY_TARGET: http://api:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

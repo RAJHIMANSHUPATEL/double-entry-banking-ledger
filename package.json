@@ -1,0 +1,36 @@
+{
+  "name": "paise-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Double-entry ledger for the fictional Anaya Studio. All business data is invented.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "migrate": "node src/db/migrate.js",
+    "dev": "concurrently -n api,web \"node --watch src/server.js\" \"npm run dev --prefix web\"",
+    "start": "node src/server.js",
+    "test": "vitest run --coverage",
+    "seed": "node src/seed/generate.js",
+    "lint": "node scripts/lint.js"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.1.3",
+    "@fastify/swagger": "^9.9.2",
+    "@fastify/swagger-ui": "^6.1.2",
+    "csv-parse": "^7.0.3",
+    "exceljs": "^4.4.0",
+    "fastify": "^5.6.1",
+    "fuzzball": "^2.2.6",
+    "pg": "^8.23.1",
+    "pino": "^9.11.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.2.7",
+    "concurrently": "^10.0.6",
+    "fast-check": "^4.10.2",
+    "vitest": "^3.2.4"
+  }
+}

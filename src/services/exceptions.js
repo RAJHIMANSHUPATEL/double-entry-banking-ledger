@@ -74,6 +74,24 @@ export class Overdraft extends LedgerError {
   }
 }
 
+export class ActorRequired extends LedgerError {
+  constructor() {
+    super("X-Actor is required on this request.", {
+      status: 400,
+      code: "ACTOR_REQUIRED",
+    });
+  }
+}
+
+export class IdempotencyConflict extends LedgerError {
+  constructor() {
+    super("Idempotency key was already used with a different request body.", {
+      status: 409,
+      code: "IDEMPOTENCY_CONFLICT",
+    });
+  }
+}
+
 export class EntryNotFound extends LedgerError {
   /** @param {number} entryId */
   constructor(entryId) {

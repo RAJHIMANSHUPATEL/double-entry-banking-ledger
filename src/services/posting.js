@@ -5,6 +5,7 @@ import { canonicalV1, hashCanonical } from "./hashing.js";
 import {
   AccountNotFound,
   AccountNotPostable,
+  IdempotencyConflict,
   InvariantViolation,
   InvalidEntry,
   Overdraft,
@@ -68,9 +69,20 @@ export const postingInternals = {
  */
 export async function postEntry(db, input) {
   const client = await db.connect();
+  let open = false;
   try {
     await client.query("BEGIN");
+    open = true;
     const meta = await lockLedger(client);
+    // Replay rolls back because the ledger lock is held in this transaction.
+    // A retry must not advance ledger_meta or allocate another sequence.
+    const replay = await findReplay(client, input);
+    if (replay) {
+      await client.query("ROLLBACK");
+      open = false;
+      const existing = await loadEntry(client, replay.entryId);
+      return { ...existing, replayed: true };
+    }
     const draft = validateDraft(input);
     const accounts = await resolveAccounts(client, draft.lines);
     if (!input.skipOverdraft) {
@@ -129,19 +141,76 @@ export async function postEntry(db, input) {
         [entryId, account.id, index + 1, line.debitPaise, line.creditPaise, line.lineNarration],
       );
     }
+    if (input.idempotencyKey) {
+      await client.query(
+        `INSERT INTO idempotency_keys (key, request_hash, entry_id, created_at)
+         VALUES ($1, $2, $3, $4)`,
+        [input.idempotencyKey, input.requestHash, entryId, createdAt],
+      );
+    }
     await postingInternals.assertEntryInvariant(client, entryId);
     await client.query("UPDATE ledger_meta SET last_sequence = $1, last_hash = $2 WHERE id = 1", [
       sequenceNo,
       entryHash,
     ]);
     await client.query("COMMIT");
-    return loadEntry(client, entryId);
+    open = false;
+    const created = await loadEntry(client, entryId);
+    return { ...created, replayed: false };
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (open) await client.query("ROLLBACK");
+    if (isIdempotencyUniqueViolation(error) && input.idempotencyKey) {
+      const winner = await loadIdempotentWinner(db, input.idempotencyKey, input.requestHash);
+      if (winner) return { ...winner, replayed: true };
+    }
     throw error;
   } finally {
     client.release();
   }
+}
+
+function isIdempotencyUniqueViolation(error) {
+  return error?.code === "23505" && error?.table === "idempotency_keys";
+}
+
+/**
+ * Backstop when two transactions pass the pre-insert lookup. The ledger lock
+ * should make this rare; the primary key is what keeps a single row.
+ * @param {import('pg').Pool} db
+ * @param {string} key
+ * @param {string | null | undefined} requestHash
+ */
+async function loadIdempotentWinner(db, key, requestHash) {
+  const reader = await db.connect();
+  try {
+    const found = await reader.query("SELECT request_hash, entry_id FROM idempotency_keys WHERE key = $1", [key]);
+    if (found.rowCount === 0) return null;
+    if (String(found.rows[0].request_hash).trim() !== requestHash) return null;
+    return loadEntry(reader, found.rows[0].entry_id);
+  } finally {
+    reader.release();
+  }
+}
+
+/**
+ * @param {import('pg').PoolClient} client
+ * @param {{ idempotencyKey?: string | null, requestHash?: string | null }} input
+ */
+async function findReplay(client, input) {
+  if (input.idempotencyKey == null) return null;
+  if (typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(input.idempotencyKey)) {
+    throw new InvalidEntry("Idempotency-Key must be 1–128 characters from [A-Za-z0-9_.:-].");
+  }
+  if (typeof input.requestHash !== "string" || !/^[0-9a-f]{64}$/.test(input.requestHash)) {
+    throw new InvalidEntry("A request hash is required when an idempotency key is sent.");
+  }
+  const found = await client.query("SELECT request_hash, entry_id FROM idempotency_keys WHERE key = $1", [
+    input.idempotencyKey,
+  ]);
+  if (found.rowCount === 0) return null;
+  const storedHash = String(found.rows[0].request_hash).trim();
+  if (storedHash !== input.requestHash) throw new IdempotencyConflict();
+  return { entryId: found.rows[0].entry_id };
 }
 
 /**
@@ -288,6 +357,24 @@ async function assertNoOverdraft(client, lines, accounts) {
 
 /**
  * @param {import('pg').PoolClient} client
+ * @param {{ limit: number, offset: number }} page
+ */
+export async function listEntries(client, page) {
+  const total = await client.query("SELECT count(*)::bigint AS n FROM journal_entries");
+  const ids = await client.query(
+    "SELECT id FROM journal_entries ORDER BY sequence_no DESC LIMIT $1 OFFSET $2",
+    [page.limit, page.offset],
+  );
+  const entries = [];
+  for (const row of ids.rows) {
+    const entry = await loadEntry(client, row.id);
+    if (entry) entries.push(entry);
+  }
+  return { entries, total: total.rows[0].n, limit: page.limit, offset: page.offset };
+}
+
+/**
+ * @param {import('pg').PoolClient} client
  * @param {number} entryId
  */
 export async function loadEntry(client, entryId) {
@@ -299,7 +386,8 @@ export async function loadEntry(client, entryId) {
     [entryId],
   );
   const lines = await client.query(
-    `SELECT l.id, l.line_no, l.account_id, l.debit_paise, l.credit_paise, l.line_narration, a.code AS account_code
+    `SELECT l.id, l.line_no, l.account_id, l.debit_paise, l.credit_paise, l.line_narration,
+            a.code AS account_code, a.name AS account_name
      FROM journal_lines l
      JOIN accounts a ON a.id = l.account_id
      WHERE l.entry_id = $1
@@ -326,6 +414,7 @@ export async function loadEntry(client, entryId) {
       lineNo: line.line_no,
       accountId: line.account_id,
       accountCode: line.account_code,
+      accountName: line.account_name,
       debitPaise: line.debit_paise,
       creditPaise: line.credit_paise,
       lineNarration: line.line_narration,

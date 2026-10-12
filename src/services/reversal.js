@@ -37,28 +37,35 @@ export async function reverseEntry(db, entryId, options) {
     original = await loadEntry(client, entryId);
     if (!original) throw new EntryNotFound(entryId);
     const existing = await client.query("SELECT id FROM journal_entries WHERE reverses_entry_id = $1", [entryId]);
-    if (existing.rowCount) throw new AlreadyReversed(entryId);
-    await warnIfReversalOverdraws(client, original);
+    if (existing.rowCount && !options.idempotencyKey) throw new AlreadyReversed(entryId);
+    if (!existing.rowCount) await warnIfReversalOverdraws(client, original);
   } finally {
     client.release();
   }
 
-  return postEntry(db, {
-    entryDate: options.entryDate,
-    narration: options.narration,
-    reference: options.reference ?? null,
-    createdBy: options.createdBy,
-    lines: original.lines.map((line) => ({
-      accountCode: line.accountCode,
-      debitPaise: line.creditPaise,
-      creditPaise: line.debitPaise,
-      lineNarration: line.lineNarration,
-    })),
-    reversesEntryId: entryId,
-    idempotencyKey: options.idempotencyKey ?? null,
-    requestHash: options.requestHash ?? null,
-    skipOverdraft: true,
-  });
+  try {
+    return await postEntry(db, {
+      entryDate: options.entryDate,
+      narration: options.narration,
+      reference: options.reference ?? null,
+      createdBy: options.createdBy,
+      lines: original.lines.map((line) => ({
+        accountCode: line.accountCode,
+        debitPaise: line.creditPaise,
+        creditPaise: line.debitPaise,
+        lineNarration: line.lineNarration,
+      })),
+      reversesEntryId: entryId,
+      idempotencyKey: options.idempotencyKey ?? null,
+      requestHash: options.requestHash ?? null,
+      skipOverdraft: true,
+    });
+  } catch (error) {
+    if (error?.code === "23505" && String(error.constraint ?? "").includes("reversal")) {
+      throw new AlreadyReversed(entryId);
+    }
+    throw error;
+  }
 }
 
 /**

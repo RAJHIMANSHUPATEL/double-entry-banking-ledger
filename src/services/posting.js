@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { nowUtc } from "../domain/clock.js";
 import { money } from "../domain/money.js";
 import { balancePaise } from "./balances.js";
+import { canonicalV1, hashCanonical } from "./hashing.js";
 import {
   AccountNotFound,
   AccountNotPostable,
@@ -79,7 +79,25 @@ export async function postEntry(db, input) {
     const sequenceNo = meta.last_sequence + 1;
     const prevHash = String(meta.last_hash).trim();
     const createdAt = nowUtc();
-    const entryHash = provisionalHash(sequenceNo, prevHash, draft.debitTotal);
+    const entryHash = hashCanonical(
+      canonicalV1({
+        sequenceNo,
+        entryDate: draft.entryDate,
+        narration: draft.narration,
+        reference: draft.reference,
+        reversesEntryId: input.reversesEntryId ?? null,
+        createdBy: draft.createdBy,
+        createdAt,
+        prevHash,
+        lines: draft.lines.map((line, index) => ({
+          lineNo: index + 1,
+          accountId: accounts.get(line.accountCode).id,
+          debitPaise: line.debitPaise,
+          creditPaise: line.creditPaise,
+          lineNarration: line.lineNarration,
+        })),
+      }),
+    );
     const inserted = await client.query(
       `INSERT INTO journal_entries (
          sequence_no, entry_date, narration, reference, reverses_entry_id,
@@ -135,16 +153,6 @@ async function lockLedger(client) {
     throw new InvariantViolation("ledger_meta has no genesis row.");
   }
   return result.rows[0];
-}
-
-/**
- * Placeholder digest used until the canonical v1 string replaces it.
- * @param {number} sequenceNo
- * @param {string} prevHash
- * @param {number} debitTotal
- */
-function provisionalHash(sequenceNo, prevHash, debitTotal) {
-  return createHash("sha256").update(`${sequenceNo}|${prevHash}|${debitTotal}`).digest("hex");
 }
 
 function validateDraft(input) {
@@ -278,7 +286,11 @@ async function assertNoOverdraft(client, lines, accounts) {
   }
 }
 
-async function loadEntry(client, entryId) {
+/**
+ * @param {import('pg').PoolClient} client
+ * @param {number} entryId
+ */
+export async function loadEntry(client, entryId) {
   const header = await client.query(
     `SELECT id, sequence_no, entry_date, narration, reference, reverses_entry_id,
             debit_total_paise, credit_total_paise, created_by, created_at, prev_hash, entry_hash
@@ -295,6 +307,7 @@ async function loadEntry(client, entryId) {
     [entryId],
   );
   const row = header.rows[0];
+  if (!row) return null;
   return {
     id: row.id,
     sequenceNo: row.sequence_no,

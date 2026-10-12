@@ -74,6 +74,28 @@ export class Overdraft extends LedgerError {
   }
 }
 
+export class EntryNotFound extends LedgerError {
+  /** @param {number} entryId */
+  constructor(entryId) {
+    super(`Journal entry ${entryId} was not found.`, {
+      status: 404,
+      code: "ENTRY_NOT_FOUND",
+      details: { entry_id: entryId },
+    });
+  }
+}
+
+export class AlreadyReversed extends LedgerError {
+  /** @param {number} entryId */
+  constructor(entryId) {
+    super(`Journal entry ${entryId} has already been reversed.`, {
+      status: 409,
+      code: "ALREADY_REVERSED",
+      details: { entry_id: entryId },
+    });
+  }
+}
+
 export class InvariantViolation extends LedgerError {
   /** @param {string} message */
   constructor(message) {

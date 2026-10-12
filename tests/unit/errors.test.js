@@ -4,7 +4,7 @@ import { buildApp } from "../../src/app.js";
 
 describe("error envelope", () => {
   it("returns code, message, details, and request_id for a validation failure", async () => {
-    const app = buildApp({ logger: false });
+    const app = await buildApp({ logger: false });
     app.post("/probe", async (request) => {
       const { parseWith } = await import("../../src/api/errors.js");
       parseWith(z.object({ name: z.string().min(1) }), request.body);
@@ -32,7 +32,7 @@ describe("error envelope", () => {
   });
 
   it("generates a request id when the client omits one", async () => {
-    const app = buildApp({ logger: false });
+    const app = await buildApp({ logger: false });
     const response = await app.inject({ method: "GET", url: "/health" });
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-request-id"]).toMatch(

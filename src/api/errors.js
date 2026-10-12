@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { LedgerError } from "../services/exceptions.js";
 
 /**
  * Error envelope shared by every HTTP failure.
@@ -42,10 +43,22 @@ export function parseWith(schema, value) {
  */
 export function sendError(reply, request, error) {
   const requestId = request.requestId ?? "unknown";
-  const statusCode = error instanceof HttpError ? error.statusCode : 500;
-  const code = error instanceof HttpError ? error.code : "INTERNAL_ERROR";
-  const message = error instanceof HttpError ? error.message : "Internal server error.";
-  const details = error instanceof HttpError ? error.details ?? {} : {};
+  const known = error instanceof HttpError || error instanceof LedgerError;
+  if (!known && typeof error.statusCode === "number" && error.statusCode < 500) {
+    reply.status(error.statusCode).send({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: error.message,
+        details: {},
+        request_id: requestId,
+      },
+    });
+    return;
+  }
+  const statusCode = known ? error.statusCode : 500;
+  const code = known ? error.code : "INTERNAL_ERROR";
+  const message = known ? error.message : "Internal server error.";
+  const details = known ? error.details ?? {} : {};
   reply.status(statusCode).send({
     error: {
       code,

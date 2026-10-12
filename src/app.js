@@ -6,6 +6,7 @@ import { HttpError, registerRequestContext, sendError } from "./api/errors.js";
 import { registerAccountRoutes } from "./api/routes/accounts.js";
 import { registerAuditRoutes } from "./api/routes/audit.js";
 import { registerEntryRoutes } from "./api/routes/entries.js";
+import { registerReportRoutes } from "./api/routes/reports.js";
 import { createPool } from "./db/pool.js";
 
 /**
@@ -36,6 +37,7 @@ export async function buildApp(opts = {}) {
   app.get("/openapi.json", async () => app.swagger());
   registerAccountRoutes(app);
   registerEntryRoutes(app);
+  registerReportRoutes(app);
   registerAuditRoutes(app);
 
   app.setErrorHandler((error, request, reply) => {

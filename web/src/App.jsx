@@ -1,13 +1,19 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { ActorProvider, useActor } from "./actor.jsx";
+import { Audit } from "./pages/Audit.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
 import { PostEntry } from "./pages/PostEntry.jsx";
+import { Reconciliation } from "./pages/Reconciliation.jsx";
 import { Statement } from "./pages/Statement.jsx";
+import { TrialBalance } from "./pages/TrialBalance.jsx";
 
 const links = [
   ["/", "Dashboard"],
   ["/post", "Post entry"],
   ["/statement", "Statement"],
+  ["/trial-balance", "Trial balance"],
+  ["/reconciliation", "Reconciliation"],
+  ["/audit", "Audit"],
 ];
 
 function Frame() {
@@ -34,6 +40,9 @@ function Frame() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/post" element={<PostEntry />} />
           <Route path="/statement" element={<Statement />} />
+          <Route path="/trial-balance" element={<TrialBalance />} />
+          <Route path="/reconciliation" element={<Reconciliation />} />
+          <Route path="/audit" element={<Audit />} />
         </Routes>
       </main>
     </div>

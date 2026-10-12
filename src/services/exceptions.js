@@ -114,6 +114,37 @@ export class AlreadyReversed extends LedgerError {
   }
 }
 
+export class AlreadyMatched extends LedgerError {
+  /**
+   * @param {string} message
+   * @param {object} [details]
+   */
+  constructor(message, details = {}) {
+    super(message, { status: 409, code: "ALREADY_MATCHED", details });
+  }
+}
+
+export class StatementNotFound extends LedgerError {
+  /** @param {number} statementId */
+  constructor(statementId) {
+    super(`Bank statement ${statementId} was not found.`, {
+      status: 404,
+      code: "STATEMENT_NOT_FOUND",
+      details: { statement_id: statementId },
+    });
+  }
+}
+
+export class CsvRejected extends LedgerError {
+  /**
+   * @param {string} message
+   * @param {object} [details]
+   */
+  constructor(message, details = {}) {
+    super(message, { status: 422, code: "CSV_REJECTED", details });
+  }
+}
+
 export class InvariantViolation extends LedgerError {
   /** @param {string} message */
   constructor(message) {

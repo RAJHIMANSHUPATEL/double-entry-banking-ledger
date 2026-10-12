@@ -147,6 +147,41 @@ export function presentBalanceSheet(report) {
   };
 }
 
+/**
+ * @param {{ id: number, bankAccountCode: string, sourceFilename: string, uploadedBy: string, uploadedAt: Date | string, rowCount: number, counts: { matched: number, suggested: number, unmatched: number, rejected: number } }} statement
+ */
+export function presentBankStatement(statement) {
+  return {
+    id: statement.id,
+    bank_account_code: statement.bankAccountCode,
+    source_filename: statement.sourceFilename,
+    uploaded_by: statement.uploadedBy,
+    uploaded_at: statement.uploadedAt instanceof Date ? statement.uploadedAt.toISOString() : new Date(statement.uploadedAt).toISOString(),
+    row_count: statement.rowCount,
+    counts: statement.counts,
+  };
+}
+
+/**
+ * @param {{ id: number, rowNumber: number, txnDate: string, narration: string, amountPaise: number, bankBalancePaise: number | null, matchStatus: string, matchedJournalLineId: number | null, candidateJournalLineId: number | null, matchScore: number | null }} line
+ */
+export function presentBankLine(line) {
+  return {
+    id: line.id,
+    row_number: line.rowNumber,
+    txn_date: line.txnDate,
+    narration: line.narration,
+    amount_paise: line.amountPaise,
+    amount_display: formatInr(line.amountPaise),
+    bank_balance_paise: line.bankBalancePaise,
+    bank_balance_display: line.bankBalancePaise == null ? null : formatInr(line.bankBalancePaise),
+    match_status: line.matchStatus,
+    matched_journal_line_id: line.matchedJournalLineId,
+    candidate_journal_line_id: line.candidateJournalLineId,
+    match_score: line.matchScore,
+  };
+}
+
 export function presentAccount(account) {
   return {
     code: account.code,

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import multipart from "@fastify/multipart";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { config } from "./config.js";
@@ -6,6 +7,7 @@ import { HttpError, registerRequestContext, sendError } from "./api/errors.js";
 import { registerAccountRoutes } from "./api/routes/accounts.js";
 import { registerAuditRoutes } from "./api/routes/audit.js";
 import { registerEntryRoutes } from "./api/routes/entries.js";
+import { registerBankRoutes } from "./api/routes/bank.js";
 import { registerReportRoutes } from "./api/routes/reports.js";
 import { createPool } from "./db/pool.js";
 
@@ -34,10 +36,12 @@ export async function buildApp(opts = {}) {
     },
   });
   await app.register(swaggerUi, { routePrefix: "/docs" });
+  await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
   app.get("/openapi.json", async () => app.swagger());
   registerAccountRoutes(app);
   registerEntryRoutes(app);
   registerReportRoutes(app);
+  registerBankRoutes(app);
   registerAuditRoutes(app);
 
   app.setErrorHandler((error, request, reply) => {

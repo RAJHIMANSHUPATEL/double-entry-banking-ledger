@@ -182,6 +182,35 @@ export function presentBankLine(line) {
   };
 }
 
+/**
+ * @param {{ journalLineId: number, entryDate: string, signedPaise: number, narration: string }} line
+ */
+export function presentOpenJournalLine(line) {
+  return {
+    id: line.journalLineId,
+    entry_date: line.entryDate,
+    signed_paise: line.signedPaise,
+    amount_display: formatInr(line.signedPaise),
+    narration: line.narration,
+  };
+}
+
+/**
+ * @param {{ id: number, statementLineId: number, journalLineId: number | null, action: string, score: number | null, actor: string, createdAt: Date | string, note: string | null }} event
+ */
+export function presentReconciliationEvent(event) {
+  return {
+    id: event.id,
+    statement_line_id: event.statementLineId,
+    journal_line_id: event.journalLineId,
+    action: event.action,
+    score: event.score,
+    actor: event.actor,
+    created_at: event.createdAt instanceof Date ? event.createdAt.toISOString() : new Date(event.createdAt).toISOString(),
+    note: event.note,
+  };
+}
+
 export function presentAccount(account) {
   return {
     code: account.code,

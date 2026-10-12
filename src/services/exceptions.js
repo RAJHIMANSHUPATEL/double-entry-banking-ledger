@@ -124,6 +124,17 @@ export class AlreadyMatched extends LedgerError {
   }
 }
 
+export class StatementLineNotFound extends LedgerError {
+  /** @param {number} lineId */
+  constructor(lineId) {
+    super(`Bank statement line ${lineId} was not found.`, {
+      status: 404,
+      code: "STATEMENT_NOT_FOUND",
+      details: { statement_line_id: lineId },
+    });
+  }
+}
+
 export class StatementNotFound extends LedgerError {
   /** @param {number} statementId */
   constructor(statementId) {

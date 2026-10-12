@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { requireActor } from "../actor.js";
 import { HttpError, parseWith } from "../errors.js";
-import { presentBankLine, presentBankStatement } from "../present.js";
+import { presentBankLine, presentBankStatement, presentOpenJournalLine } from "../present.js";
 import { CsvRejected } from "../../services/exceptions.js";
-import { getStatement, importStatement, listStatementLines } from "../../services/reconciliation.js";
-import { bankAccountCodeSchema, statementLinesQuerySchema } from "../../schemas/bank.js";
+import { confirmLine, getStatement, importStatement, listOpenJournalLines, listStatementLines, rejectLine, rematchStatement } from "../../services/reconciliation.js";
+import { bankAccountCodeSchema, confirmBodySchema, matchBodySchema, statementLinesQuerySchema } from "../../schemas/bank.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -43,6 +43,63 @@ export function registerBankRoutes(app) {
       } finally {
         client.release();
       }
+    },
+  );
+
+  app.get(
+    "/bank-statements/:id/open-journal-lines",
+    { schema: { tags: ["reconciliation"], summary: "Unmatched journal lines for this bank account" } },
+    async (request) => {
+      const id = parseId(request.params.id);
+      const client = await app.pg.connect();
+      try {
+        const lines = await listOpenJournalLines(client, id);
+        return { lines: lines.map(presentOpenJournalLine) };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  app.post(
+    "/bank-statements/:id/rematch",
+    { schema: { tags: ["reconciliation"], summary: "Rematch unmatched and rejected lines" } },
+    async (request) => {
+      const actor = requireActor(request);
+      const id = parseId(request.params.id);
+      return presentBankStatement(await rematchStatement(app.pg, id, actor));
+    },
+  );
+
+  app.post(
+    "/bank-statement-lines/:id/confirm",
+    { schema: { tags: ["reconciliation"], summary: "Confirm a suggestion" } },
+    async (request) => {
+      const actor = requireActor(request);
+      const id = parseId(request.params.id);
+      const body = parseWith(confirmBodySchema, request.body ?? {});
+      return presentBankLine(await confirmLine(app.pg, id, actor, body.journal_line_id ?? null));
+    },
+  );
+
+  app.post(
+    "/bank-statement-lines/:id/match",
+    { schema: { tags: ["reconciliation"], summary: "Match an unmatched line to a journal line" } },
+    async (request) => {
+      const actor = requireActor(request);
+      const id = parseId(request.params.id);
+      const body = parseWith(matchBodySchema, request.body ?? {});
+      return presentBankLine(await confirmLine(app.pg, id, actor, body.journal_line_id));
+    },
+  );
+
+  app.post(
+    "/bank-statement-lines/:id/reject",
+    { schema: { tags: ["reconciliation"], summary: "Reject a suggestion" } },
+    async (request) => {
+      const actor = requireActor(request);
+      const id = parseId(request.params.id);
+      return presentBankLine(await rejectLine(app.pg, id, actor));
     },
   );
 

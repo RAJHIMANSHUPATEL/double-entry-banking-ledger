@@ -80,7 +80,7 @@ function eligible(row, journals, blockedIds, rejectedPairs, windowDays, used) {
     if (blockedIds.has(journal.journalLineId) || used.has(journal.journalLineId)) continue;
     if (rejectedPairs.has(`${row.rowNumber}:${journal.journalLineId}`)) continue;
     if (row.amountPaise !== journal.signedPaise) continue;
-    if (daysApart(row.txnDate, journal.entryDate) > windowDays) continue;
+    if (!datesWithin(row.txnDate, journal.entryDate, windowDays)) continue;
     found.push({
       journalLineId: journal.journalLineId,
       narration: journal.narration,
@@ -119,6 +119,16 @@ function decide(row, candidates, autoThreshold, suggestThreshold) {
     return { rowNumber: row.rowNumber, status: "suggested", journalLineId: best.journalLineId, score: best.score };
   }
   return { rowNumber: row.rowNumber, status: "unmatched", journalLineId: null, score: best.score };
+}
+
+/**
+ * Inclusive calendar-day window used by import and by a human confirm.
+ * @param {string} left
+ * @param {string} right
+ * @param {number} windowDays
+ */
+export function datesWithin(left, right, windowDays) {
+  return daysApart(left, right) <= windowDays;
 }
 
 /**
